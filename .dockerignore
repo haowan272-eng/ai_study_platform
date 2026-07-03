@@ -1,0 +1,14 @@
+.env
+.venv
+.git
+.idea
+.pytest_cache
+__pycache__
+*.py[cod]
+*.db
+*.log
+data
+uploads
+frontend/vue/node_modules
+frontend/vue/dist
+node_modules

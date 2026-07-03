@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+.idea/
+.pytest_cache/
+uploads/
+data/
+*.db
+*.log
+frontend/vue/node_modules/
+frontend/vue/dist/
