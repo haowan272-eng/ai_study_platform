@@ -8,10 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from app.config import COACH_DATA_DIR
+from app.mcp.tool_registry import assert_tool_allowed
 
 
 class FilesystemMCPClient:
-    def __init__(self, root: str | Path | None = None):
+    def __init__(self, root: str | Path | None = None, agent_name: str = "storage"):
+        self.agent_name = agent_name
         self.root = Path(root or COACH_DATA_DIR).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
 
@@ -22,6 +24,7 @@ class FilesystemMCPClient:
         return candidate
 
     def read_json(self, relative_path: str, default: Any = None) -> Any:
+        assert_tool_allowed(self.agent_name, "filesystem.read_json")
         path = self._safe_path(relative_path)
         if not path.exists():
             return default
@@ -31,6 +34,7 @@ class FilesystemMCPClient:
             return default
 
     def write_json(self, relative_path: str, value: Any) -> str:
+        assert_tool_allowed(self.agent_name, "filesystem.write_json")
         path = self._safe_path(relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, temp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
@@ -44,6 +48,7 @@ class FilesystemMCPClient:
         return str(path)
 
     def list_json(self, relative_dir: str) -> list[dict[str, Any]]:
+        assert_tool_allowed(self.agent_name, "filesystem.list_json")
         directory = self._safe_path(relative_dir)
         if not directory.exists() or not directory.is_dir():
             return []

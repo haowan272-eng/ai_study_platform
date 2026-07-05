@@ -50,11 +50,3 @@ app.include_router(api_router)
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "ai-agent-learning-coach"}
-
-
-@app.get("/metrics")
-def metrics():
-    return {
-        "service": "ai-agent-learning-coach",
-        "queue": "celery",
-    }

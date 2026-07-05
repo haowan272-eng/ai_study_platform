@@ -22,9 +22,9 @@ const password = ref("");
 const accessToken = ref(localStorage.getItem("coach_access_token") ?? "");
 const authMode = ref<"login" | "register">("login");
 const userGoal = ref(defaultGoal);
-const learnerId = ref(username.value || "anonymous");
 const sessionId = ref("");
 const state = ref<CoachState>({});
+const displayState = ref<CoachState>({});
 const events = ref<StreamAgentEvent[]>([]);
 const loading = ref(false);
 const taskControlBusy = ref(false);
@@ -120,6 +120,18 @@ const taskToggleLabel = computed(() => {
 });
 const taskToggleDisabled = computed(() => taskControlBusy.value || state.value.status === "pausing");
 let eventSource: EventSource | null = null;
+const typewriterTimers = new Map<string, number>();
+const typewriterPaths = [
+  "tutor_content",
+  "tutor_task.objective",
+  "tutor_task.example",
+  "project_task.objective",
+  "learning_report"
+];
+const typewriterChunkSize = 1;
+const typewriterIntervalMs = 28;
+const typingCount = ref(0);
+const isTyping = computed(() => typingCount.value > 0);
 
 const terminalStatuses = new Set([
   "planning_completed",
@@ -196,7 +208,95 @@ function maybeShowFinalQuizCongrats(nextState: CoachState) {
   }
 }
 
+function cloneCoachState(nextState: CoachState): CoachState {
+  return {
+    ...nextState,
+    tutor_task: nextState.tutor_task ? { ...nextState.tutor_task } : nextState.tutor_task,
+    project_task: nextState.project_task ? { ...nextState.project_task } : nextState.project_task
+  };
+}
+
+function valueAtPath(source: CoachState, path: string): string {
+  const value = path.split(".").reduce<unknown>((current, part) => {
+    if (!current || typeof current !== "object") return undefined;
+    return (current as Record<string, unknown>)[part];
+  }, source);
+  return typeof value === "string" ? value : "";
+}
+
+function setValueAtPath(target: CoachState, path: string, value: string) {
+  const parts = path.split(".");
+  let current = target as Record<string, unknown>;
+  for (const part of parts.slice(0, -1)) {
+    const next = current[part];
+    if (!next || typeof next !== "object") current[part] = {};
+    current = current[part] as Record<string, unknown>;
+  }
+  current[parts[parts.length - 1]] = value;
+}
+
+function stopTypewriter(path?: string) {
+  const keys = path ? [path] : [...typewriterTimers.keys()];
+  for (const key of keys) {
+    const timer = typewriterTimers.get(key);
+    if (timer !== undefined) window.clearInterval(timer);
+    typewriterTimers.delete(key);
+  }
+  typingCount.value = typewriterTimers.size;
+}
+
+function typeText(path: string, from: string, to: string) {
+  stopTypewriter(path);
+  let cursor = from.length;
+  const timer = window.setInterval(() => {
+    cursor = Math.min(cursor + typewriterChunkSize, to.length);
+    const nextDisplay = cloneCoachState(displayState.value);
+    setValueAtPath(nextDisplay, path, to.slice(0, cursor));
+    displayState.value = nextDisplay;
+    if (cursor >= to.length) stopTypewriter(path);
+  }, typewriterIntervalMs);
+  typewriterTimers.set(path, timer);
+  typingCount.value = typewriterTimers.size;
+}
+
+function syncDisplayState(nextState: CoachState) {
+  const nextDisplay = cloneCoachState(nextState);
+  const previousDisplay = displayState.value;
+  const previousRaw = state.value;
+
+  for (const path of typewriterPaths) {
+    const target = valueAtPath(nextState, path);
+    const previousTarget = valueAtPath(previousRaw, path);
+    const currentDisplay = valueAtPath(previousDisplay, path);
+    if (!target) {
+      stopTypewriter(path);
+      continue;
+    }
+
+    if (target === previousTarget) {
+      if (typewriterTimers.has(path) || (currentDisplay && currentDisplay !== target)) {
+        setValueAtPath(nextDisplay, path, currentDisplay);
+      } else {
+        stopTypewriter(path);
+      }
+      continue;
+    }
+
+    const start = target.startsWith(currentDisplay) ? currentDisplay : "";
+    setValueAtPath(nextDisplay, path, start);
+    typeText(path, start, target);
+  }
+
+  displayState.value = nextDisplay;
+}
+
+function resetDisplayState() {
+  stopTypewriter();
+  displayState.value = {};
+}
+
 function setCoachState(nextState: CoachState) {
+  syncDisplayState(nextState);
   state.value = nextState;
   if (nextState.user_goal) userGoal.value = nextState.user_goal;
   hydrateInputs(nextState);
@@ -214,6 +314,10 @@ function closeEventStream() {
     eventSource = null;
   }
 }
+
+onUnmounted(() => {
+  stopTypewriter();
+});
 
 function isTerminalStatus(status?: string) {
   return Boolean(status && terminalStatuses.has(status));
@@ -344,9 +448,7 @@ async function handleAuth() {
     const tokens = await login(username.value.trim(), password.value);
     accessToken.value = tokens.access_token;
     localStorage.setItem("coach_access_token", tokens.access_token);
-    localStorage.setItem("coach_refresh_token", tokens.refresh_token);
     localStorage.setItem("coach_username", username.value.trim());
-    learnerId.value = username.value.trim();
     password.value = "";
     await restoreLatestSession(tokens.access_token, true);
   } catch (exc) {
@@ -360,10 +462,10 @@ function logout() {
   closeEventStream();
   accessToken.value = "";
   localStorage.removeItem("coach_access_token");
-  localStorage.removeItem("coach_refresh_token");
   localStorage.removeItem("coach_username");
   sessionId.value = "";
   state.value = {};
+  resetDisplayState();
   events.value = [];
   resetAnswers();
   clearErrors("auth", "route", "week", "quiz", "session");
@@ -383,12 +485,13 @@ async function start() {
   loading.value = true;
   sessionId.value = "";
   state.value = {};
+  resetDisplayState();
   events.value = [];
   resetAnswers();
   clearErrors("route", "week", "quiz", "session");
 
   try {
-    const result = await startLearning(userGoal.value.trim(), learnerId.value.trim() || username.value, accessToken.value);
+    const result = await startLearning(userGoal.value.trim(), accessToken.value);
     sessionId.value = result.session_id;
     setCoachState(result.state);
     appendProgressEvent(result, "后台任务已创建");
@@ -413,7 +516,7 @@ function optionState(question: { correct_answer?: string; user_answer?: string }
 function retryQuiz() {
   for (const key of Object.keys(answers)) delete answers[Number(key)];
   awaitingFinalQuizCongrats.value = false;
-  state.value = {
+  const nextState = {
     ...state.value,
     quiz: quiz.value.map(({ correct_answer, user_answer, is_correct, ...question }) => question),
     score: null,
@@ -422,6 +525,8 @@ function retryQuiz() {
     interview_evaluations: [],
     interview_score: null
   };
+  state.value = nextState;
+  displayState.value = cloneCoachState(nextState);
   clearErrors("quiz", "week", "session");
 }
 
@@ -701,7 +806,7 @@ onUnmounted(() => {
             </div>
             <div v-show="!collapsed.tutor">
               <h3>{{ state.tutor_task?.title ?? state.current_topic }}</h3>
-              <p>{{ state.tutor_task?.objective ?? state.tutor_content }}</p>
+              <p :class="{ typing: isTyping }">{{ displayState.tutor_task?.objective ?? displayState.tutor_content }}</p>
 
               <h4 v-if="state.tutor_task?.concepts?.length">核心概念</h4>
               <ul>
@@ -709,7 +814,7 @@ onUnmounted(() => {
               </ul>
 
               <h4 v-if="state.tutor_task?.example">示例</h4>
-              <pre v-if="state.tutor_task?.example" class="markdown">{{ state.tutor_task.example }}</pre>
+              <pre v-if="state.tutor_task?.example" class="markdown" :class="{ typing: isTyping }">{{ displayState.tutor_task?.example }}</pre>
 
               <h4 v-if="state.tutor_task?.practice_steps?.length">实践步骤</h4>
               <ol>
@@ -757,7 +862,7 @@ onUnmounted(() => {
               </div>
               <div v-show="!collapsed.project">
                 <h3>{{ state.project_task?.title }}</h3>
-                <p>{{ state.project_task?.objective }}</p>
+                <p :class="{ typing: isTyping }">{{ displayState.project_task?.objective }}</p>
                 <ol>
                   <li v-for="milestone in state.project_task?.milestones ?? []" :key="milestone">
                     {{ milestone }}
@@ -773,7 +878,7 @@ onUnmounted(() => {
               <span :class="{ done: completedAgents.has('reporter') }">报告已生成</span>
               <button class="secondary" type="button">{{ collapsed.report ? "展开" : "收起" }}</button>
             </div>
-            <pre v-show="!collapsed.report" class="markdown">{{ state.learning_report }}</pre>
+            <pre v-show="!collapsed.report" class="markdown" :class="{ typing: isTyping }">{{ displayState.learning_report }}</pre>
           </section>
 
           <section class="panel" v-if="hasWeekContent && quiz.length">

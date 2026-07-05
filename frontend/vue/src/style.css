@@ -414,6 +414,24 @@ textarea {
   padding: 12px;
 }
 
+.typing::after {
+  animation: cursor-blink 0.9s steps(2, start) infinite;
+  content: " |";
+  font-weight: 700;
+}
+
+@keyframes cursor-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+
+  46%,
+  100% {
+    opacity: 0;
+  }
+}
+
 .modal-backdrop {
   align-items: center;
   background: rgb(23 32 38 / 62%);

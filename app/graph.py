@@ -1,11 +1,12 @@
 """LangGraph workflow for the AI Agent Learning Coach."""
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from time import perf_counter
 from typing import Any
 
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Send
 
 from app.agents import (
     assessment_agent,
@@ -24,19 +25,72 @@ AgentNode = Callable[[LearningCoachState], dict[str, Any]]
 CheckpointCallback = Callable[[dict[str, Any]], bool]
 
 
+TRACE_KEYS = (
+    "session_id",
+    "current_task_id",
+    "status",
+    "next_action",
+    "route_target",
+    "current_week",
+    "current_topic",
+    "completed_agents",
+    "score",
+    "weak_points",
+    "failed_node",
+    "retryable",
+)
+
+
+def _state_snapshot(state: LearningCoachState | dict[str, Any]) -> dict[str, Any]:
+    """Keep node trace payloads useful without copying full reports or messages."""
+    snapshot = {key: state.get(key) for key in TRACE_KEYS if key in state}
+    snapshot.update({
+        "learning_plan_count": len(state.get("learning_plan", []) or []),
+        "resources_count": len(state.get("resources", []) or []),
+        "repo_analysis_count": len(state.get("repo_analysis", []) or []),
+        "quiz_count": len(state.get("quiz", []) or []),
+        "interview_questions_count": len(state.get("interview_questions", []) or []),
+        "errors_count": len(state.get("errors", []) or []),
+        "has_report": bool(state.get("learning_report")),
+        "has_project_task": bool(state.get("project_task")),
+    })
+    return snapshot
+
+
+def _thread_config(state: LearningCoachState | dict[str, Any]) -> dict[str, Any]:
+    thread_id = str(state.get("session_id") or state.get("current_task_id") or "learning-coach")
+    return {"recursion_limit": 30, "configurable": {"thread_id": thread_id}}
+
+
+@lru_cache(maxsize=1)
+def get_learning_checkpointer() -> MemorySaver:
+    """Official LangGraph checkpointer for graph-level state snapshots."""
+    return MemorySaver()
+
+
 def _safe_agent_node(node_name: str, agent: AgentNode) -> AgentNode:
     """Convert unexpected node exceptions into explicit graph state."""
 
     def _wrapped(state: LearningCoachState) -> dict[str, Any]:
         started = perf_counter()
+        input_snapshot = _state_snapshot(state)
         try:
             update = agent(state)
             duration_ms = round((perf_counter() - started) * 1000, 2)
+            output_snapshot = _state_snapshot({**dict(state), **update})
             return {
                 **update,
                 "agent_metrics": [
-                    *state.get("agent_metrics", []),
                     {"node": node_name, "status": "completed", "duration_ms": duration_ms},
+                ],
+                "agent_trace": [
+                    {
+                        "node": node_name,
+                        "status": "completed",
+                        "duration_ms": duration_ms,
+                        "input": input_snapshot,
+                        "output": output_snapshot,
+                    },
                 ],
             }
         except Exception as exc:
@@ -48,14 +102,13 @@ def _safe_agent_node(node_name: str, agent: AgentNode) -> AgentNode:
                 "retryable": False,
             }
             return {
-                "errors": [*state.get("errors", []), error],
+                "errors": [error],
                 "failed_node": node_name,
                 "retryable": False,
                 "next_action": "supervisor",
                 "route_target": "supervisor",
                 "status": "failed",
                 "agent_metrics": [
-                    *state.get("agent_metrics", []),
                     {
                         "node": node_name,
                         "status": "failed",
@@ -63,87 +116,42 @@ def _safe_agent_node(node_name: str, agent: AgentNode) -> AgentNode:
                         "error_type": type(exc).__name__,
                     },
                 ],
+                "agent_trace": [
+                    {
+                        "node": node_name,
+                        "status": "failed",
+                        "duration_ms": duration_ms,
+                        "input": input_snapshot,
+                        "error": error,
+                    },
+                ],
             }
 
     return _wrapped
 
 
-def _merge_completed_agents(state: LearningCoachState, updates: list[dict[str, Any]]) -> list[str]:
-    values = list(state.get("completed_agents", []))
-    for update in updates:
-        for agent_name in update.get("completed_agents", []):
-            if agent_name not in values:
-                values.append(agent_name)
-    return values
-
-
-def _merge_parallel_updates(state: LearningCoachState, updates: list[dict[str, Any]]) -> dict[str, Any]:
-    merged: dict[str, Any] = {}
-    errors = [*state.get("errors", [])]
-    metrics = [*state.get("agent_metrics", [])]
-    failed_nodes: list[str] = []
-
-    for update in updates:
-        for key, value in update.items():
-            if key in {
-                "completed_agents",
-                "errors",
-                "failed_node",
-                "next_action",
-                "route_target",
-                "status",
-                "retryable",
-                "agent_metrics",
-            }:
-                continue
-            merged[key] = value
-
-        errors.extend(update.get("errors", []))
-        metrics.extend(update.get("agent_metrics", []))
-        if update.get("failed_node"):
-            failed_nodes.append(str(update["failed_node"]))
-
-    merged["completed_agents"] = _merge_completed_agents(state, updates)
-    merged["agent_metrics"] = metrics
-    merged["next_action"] = "supervisor"
-    merged["route_target"] = "supervisor"
-
-    if failed_nodes:
-        merged["errors"] = errors
-        merged["failed_node"] = ",".join(failed_nodes)
-        merged["retryable"] = any(bool(update.get("retryable")) for update in updates)
-        merged["status"] = "failed"
-    else:
-        merged["status"] = "parallel_learning_completed"
-
-    return merged
-
-
-def _run_parallel_agents(state: LearningCoachState, agents: dict[str, AgentNode]) -> dict[str, Any]:
-    updates: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=len(agents)) as executor:
-        futures = {
-            executor.submit(
-                _safe_agent_node(name, agent),
-                {**dict(state), "errors": [], "agent_metrics": []},
-            ): name
-            for name, agent in agents.items()
-        }
-        for future in as_completed(futures):
-            updates.append(future.result())
-
-    return _merge_parallel_updates(state, updates)
-
-
 def learning_parallel_agent(state: LearningCoachState) -> dict[str, Any]:
-    """Run Tutor and OpenSource Mentor concurrently after planning."""
-    return _run_parallel_agents(
-        state,
-        {
-            "tutor": tutor_agent,
-            "opensource_mentor": opensource_mentor_agent,
-        },
-    )
+    """Dispatch Tutor and OpenSource Mentor through LangGraph native Send."""
+    return {
+        "status": "learning_parallel_dispatched",
+        "next_action": "wait_for_parallel_agents",
+        "agent_trace": [
+            {
+                "node": "learning_parallel",
+                "status": "dispatched",
+                "input": _state_snapshot(state),
+                "fanout": ["tutor", "opensource_mentor"],
+            },
+        ],
+    }
+
+
+def route_learning_parallel(state: LearningCoachState) -> list[Send]:
+    branch_state = {**dict(state), "next_action": "supervisor", "route_target": "supervisor"}
+    return [
+        Send("tutor", branch_state),
+        Send("opensource_mentor", branch_state),
+    ]
 
 
 @lru_cache(maxsize=1)
@@ -175,10 +183,10 @@ def build_learning_coach_graph():
             "end": END,
         },
     )
+    workflow.add_conditional_edges("learning_parallel", route_learning_parallel, ["tutor", "opensource_mentor"])
 
     for node in (
         "planner",
-        "learning_parallel",
         "tutor",
         "opensource_mentor",
         "reporter",
@@ -187,12 +195,12 @@ def build_learning_coach_graph():
     ):
         workflow.add_edge(node, "supervisor")
 
-    return workflow.compile()
+    return workflow.compile(checkpointer=get_learning_checkpointer())
 
 
 def run_learning_coach(state: LearningCoachState) -> dict:
     """Run the learning coach workflow and return the final state."""
-    return dict(build_learning_coach_graph().invoke(state, {"recursion_limit": 30}))
+    return dict(build_learning_coach_graph().invoke(state, _thread_config(state)))
 
 
 def run_learning_coach_checkpointed(state: LearningCoachState, on_checkpoint: CheckpointCallback) -> dict:
@@ -204,7 +212,7 @@ def run_learning_coach_checkpointed(state: LearningCoachState, on_checkpoint: Ch
     checkpoint_step = int(final_state.get("checkpoint_step") or 0)
     graph = build_learning_coach_graph()
 
-    for chunk in graph.stream(final_state, {"recursion_limit": 30}):
+    for chunk in graph.stream(final_state, _thread_config(final_state)):
         if not isinstance(chunk, dict):
             continue
         for node_name, update in chunk.items():
@@ -226,7 +234,9 @@ def run_learning_coach_checkpointed(state: LearningCoachState, on_checkpoint: Ch
 
 __all__ = [
     "build_learning_coach_graph",
+    "get_learning_checkpointer",
     "learning_parallel_agent",
+    "route_learning_parallel",
     "run_learning_coach",
     "run_learning_coach_checkpointed",
 ]

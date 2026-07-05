@@ -1,15 +1,15 @@
 services:
   backend:
     build: .
-    image: haohao112/learning-coach-backend:dev
+    image: haohao112/ai_study_platform_backend:dev
     command: sh -c "alembic upgrade head && python run.py"
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://coach:coach@postgres:5432/learning_coach
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      DATABASE_URL: postgresql://coach:coach@postgres:5432/ai_study_platform_db
+      REDIS_URL: redis://redis:6379/3
+      CELERY_BROKER_URL: redis://redis:6379/4
+      CELERY_RESULT_BACKEND: redis://redis:6379/5
       COACH_DATA_DIR: /app/data
       COACH_LLM_API_KEY: ${COACH_LLM_API_KEY:-}
       COACH_LLM_BASE_URL: ${COACH_LLM_BASE_URL:-https://api.deepseek.com}
@@ -25,13 +25,13 @@ services:
 
   worker:
     build: .
-    image: learning-coach-backend:dev
+    image: ai_study_platform_backend:dev
     command: sh -c "alembic upgrade head && celery -A app.celery_app.celery_app worker --loglevel=info"
     environment:
-      DATABASE_URL: postgresql://coach:coach@postgres:5432/learning_coach
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      DATABASE_URL: postgresql://coach:coach@postgres:5432/ai_study_platform_db
+      REDIS_URL: redis://redis:6379/3
+      CELERY_BROKER_URL: redis://redis:6379/4
+      CELERY_RESULT_BACKEND: redis://redis:6379/5
       COACH_DATA_DIR: /app/data
       COACH_LLM_API_KEY: ${COACH_LLM_API_KEY:-}
       COACH_LLM_BASE_URL: ${COACH_LLM_BASE_URL:-https://api.deepseek.com}
@@ -48,7 +48,7 @@ services:
   frontend:
     image: node:20-alpine
     working_dir: /app/frontend/vue
-    command: sh -c "npm install && npm run dev"
+    command: sh -c "npm ci && npm run dev"
     ports:
       - "5173:5173"
     environment:
@@ -64,11 +64,11 @@ services:
     environment:
       POSTGRES_USER: coach
       POSTGRES_PASSWORD: coach
-      POSTGRES_DB: learning_coach
+      POSTGRES_DB: ai_study_platform_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U coach -d learning_coach"]
+      test: ["CMD-SHELL", "pg_isready -U coach -d ai_study_platform_db"]
       interval: 5s
       timeout: 5s
       retries: 10

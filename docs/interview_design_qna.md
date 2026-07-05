@@ -1,4 +1,4 @@
-# AI Agent Learning Coach 面试设计问答
+﻿# AI Agent Learning Coach 面试设计问答
 
 问题：这个项目的整体定位是什么？
 
@@ -18,7 +18,7 @@
 
 问题：为什么前后端端口不一样也能通信？
 
-答案：前端 Vite dev server 和后端 FastAPI 是两个独立服务，端口不同很正常。开发环境里前端可以通过 `VITE_API_BASE` 或 Vite proxy 把请求转发到后端端口，例如前端在 5173，后端在 8001。浏览器看到的是前端页面，但 API 请求会被转到 FastAPI。
+答案：前端 Vite dev server 和后端 FastAPI 是两个独立服务，端口不同很正常。开发环境里前端可以通过 `VITE_API_BASE` 或 Vite proxy 把请求转发到后端端口，例如前端在 5173，后端在 8000。浏览器看到的是前端页面，但 API 请求会被转到 FastAPI。
 
 问题：为什么要移除 Streamlit 和 mock？
 
@@ -110,7 +110,7 @@
 
 问题：为什么端口被占用会导致服务启动失败？
 
-答案：同一台机器同一个端口只能被一个进程监听。之前 FastAPI 启动时报 `WinError 10048`，说明 8001 已经被旧进程占用。解决方法是关闭旧进程，或者修改 `.env` 中的 `PORT` 换一个端口，并同步前端代理或 `VITE_API_BASE`。
+答案：同一台机器同一个端口只能被一个进程监听。之前 FastAPI 启动时报 `WinError 10048`，说明 8000 已经被旧进程占用。解决方法是关闭旧进程，或者修改 `.env` 中的 `PORT` 换一个端口，并同步前端代理或 `VITE_API_BASE`。
 
 问题：为什么模型名可以配置？
 

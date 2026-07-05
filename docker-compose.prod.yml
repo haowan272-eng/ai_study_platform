@@ -1,16 +1,16 @@
 services:
   backend:
     build: .
-    image: learning-coach-backend:prod
+    image: ai_study_platform_backend:prod
     restart: always
     command: sh -c "alembic upgrade head && python run.py"
     ports:
       - "8000:8000"
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
-      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
-      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
-      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/3
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/4
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/5
       APP_ENV: production
       COACH_DATA_DIR: /app/data
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
@@ -32,14 +32,14 @@ services:
 
   worker:
     build: .
-    image: learning-coach-backend:prod
+    image: ai_study_platform_backend:prod
     restart: always
     command: sh -c "alembic upgrade head && celery -A app.celery_app.celery_app worker --loglevel=info"
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
-      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
-      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
-      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/3
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/4
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/5
       APP_ENV: production
       COACH_DATA_DIR: /app/data
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}

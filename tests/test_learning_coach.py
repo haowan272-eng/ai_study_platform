@@ -1,8 +1,33 @@
 """Unit and workflow tests for the Learning Coach."""
+import pytest
 from app.agents.assessment import assessment_agent
 from app.agents.supervisor import supervisor_agent
-from app.graph import _run_parallel_agents, _safe_agent_node, run_learning_coach
+from app.graph import _safe_agent_node, route_learning_parallel, run_learning_coach
+from app.state import append_unique
 from app.schemas.contracts import RepoAnalysis
+
+@pytest.fixture(autouse=True)
+def stub_github_client(monkeypatch):
+    from app.mcp.github_client import GitHubMCPClient
+
+    monkeypatch.setattr(
+        GitHubMCPClient,
+        "search_repositories",
+        lambda self, query, limit=3: [
+            {
+                "full_name": "langchain-ai/langgraph",
+                "html_url": "https://github.com/langchain-ai/langgraph",
+                "description": "Build resilient language agents as graphs.",
+                "stargazers_count": 22000,
+                "language": "Python",
+            }
+        ][:limit],
+    )
+    monkeypatch.setattr(
+        GitHubMCPClient,
+        "read_readme",
+        lambda self, repo: "# langgraph\nBuild resilient language agents as graphs.",
+    )
 
 
 def test_initial_run_generates_plan_resources_project_and_quiz(monkeypatch, tmp_path):
@@ -27,7 +52,7 @@ def test_initial_run_generates_plan_resources_project_and_quiz(monkeypatch, tmp_
         lambda self, repo: "# langgraph\nBuild resilient language agents as graphs.",
     )
     result = run_learning_coach({
-        "user_goal": "学习LangGraph和MCP",
+        "user_goal": "瀛︿範LangGraph鍜孧CP",
         "messages": [],
         "learning_plan": [],
         "resources": [],
@@ -89,13 +114,13 @@ def test_empty_project_task_model_routes_to_open_source_mentor():
 def test_repo_analysis_accepts_dict_key_data_from_llm():
     analysis = RepoAnalysis.model_validate({
         "repo": "langchain-ai/langchain",
-        "core_insights": [{"title": "模块化", "description": "链式调用清晰"}],
+        "core_insights": [{"title": "modular", "description": "clear chain"}],
         "key_data": {"stars": 140382, "language": "Python"},
         "reading_order": [{"step": "README"}, {"step": "examples"}],
     })
 
     assert "stars: 140382" in analysis.key_data
-    assert analysis.core_insights[0] == "title: 模块化; description: 链式调用清晰"
+    assert analysis.core_insights[0] == "title: modular; description: clear chain"
     assert analysis.reading_order == ["step: README", "step: examples"]
 
 
@@ -146,7 +171,7 @@ def test_score_at_least_60_routes_to_interview():
 
 def test_scoring_path_generates_interview():
     initial = run_learning_coach({
-        "user_goal": "学习Agent",
+        "user_goal": "瀛︿範Agent",
         "messages": [], "learning_plan": [], "resources": [], "repo_analysis": [],
         "project_task": {}, "learning_report": "", "quiz": [], "score": None, "weak_points": [],
         "interview_questions": [], "completed_agents": [], "remediation_done": False,
@@ -160,12 +185,12 @@ def test_scoring_path_generates_interview():
 
 def test_failed_scoring_path_returns_to_tutor_once():
     initial = run_learning_coach({
-        "user_goal": "学习Agent",
+        "user_goal": "瀛︿範Agent",
         "messages": [], "learning_plan": [], "resources": [], "repo_analysis": [],
         "project_task": {}, "learning_report": "", "quiz": [], "score": None, "weak_points": [],
         "interview_questions": [], "completed_agents": [], "remediation_done": False,
     })
-    initial["user_answers"] = ["错误"] * len(initial["quiz"])
+    initial["user_answers"] = ["閿欒"] * len(initial["quiz"])
     initial["score"] = None
     result = run_learning_coach(initial)
     assert result["score"] == 0
@@ -201,45 +226,15 @@ def test_failed_state_routes_to_reporter_then_end():
     assert supervisor_agent(completed_failure_report_state)["route_target"] == "end"
 
 
-def test_parallel_learning_merges_branch_updates():
-    def tutor(_state):
-        return {
-            "tutor_content": "lesson",
-            "completed_agents": ["tutor"],
-            "status": "tutoring_completed",
-        }
+def test_parallel_learning_uses_langgraph_send_fanout():
+    sends = route_learning_parallel({"completed_agents": ["planner"], "current_topic": "LangGraph"})
 
-    def mentor(_state):
-        return {
-            "project_task": {"title": "demo"},
-            "completed_agents": ["opensource_mentor"],
-            "status": "resources_and_project_completed",
-        }
-
-    result = _run_parallel_agents(
-        {"completed_agents": []},
-        {"tutor": tutor, "opensource_mentor": mentor},
-    )
-
-    assert result["tutor_content"] == "lesson"
-    assert result["project_task"] == {"title": "demo"}
-    assert set(result["completed_agents"]) == {"tutor", "opensource_mentor"}
-    assert result["status"] == "parallel_learning_completed"
+    assert [send.node for send in sends] == ["tutor", "opensource_mentor"]
+    assert sends[0].arg["current_topic"] == "LangGraph"
+    assert sends[1].arg["route_target"] == "supervisor"
 
 
-def test_parallel_learning_keeps_successful_branch_when_other_branch_fails():
-    def tutor(_state):
-        return {"tutor_content": "lesson", "completed_agents": ["tutor"]}
+def test_completed_agent_reducer_deduplicates_parallel_branches():
+    result = append_unique(["planner", "tutor"], ["planner", "opensource_mentor"])
 
-    def mentor(_state):
-        raise TimeoutError("github timeout")
-
-    result = _run_parallel_agents(
-        {"completed_agents": [], "errors": []},
-        {"tutor": tutor, "opensource_mentor": mentor},
-    )
-
-    assert result["tutor_content"] == "lesson"
-    assert result["status"] == "failed"
-    assert result["failed_node"] == "opensource_mentor"
-    assert result["errors"][0]["error_type"] == "TimeoutError"
+    assert result == ["planner", "tutor", "opensource_mentor"]

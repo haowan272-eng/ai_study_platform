@@ -20,7 +20,10 @@ CORS_ORIGINS = [
     if value.strip()
 ]
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///data/coach.db")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://postgres:12345@127.0.0.1:5432/ai_study_platform_db",
+)
 DB_ECHO = os.getenv("DB_ECHO", "false").lower() == "true"
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")

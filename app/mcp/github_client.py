@@ -11,6 +11,7 @@ from app.config import GITHUB_CACHE_TTL_SECONDS, GITHUB_RETRY_ATTEMPTS, GITHUB_T
 from app.redis_client import get_redis
 from app.schemas.contracts import GitHubRepository, GitHubSearchInput, dump_model
 from app.services.observability import ErrorEvent, get_logger, record_error_event, retry_with_backoff
+from app.mcp.tool_registry import assert_tool_allowed
 
 PUBLIC_GITHUB_HEADERS = {"Accept": "application/vnd.github+json"}
 RAW_GITHUB_HEADERS = {"Accept": "application/vnd.github.raw+json"}
@@ -25,8 +26,9 @@ class GitHubTools(Protocol):
 class GitHubMCPClient:
     """Stable GitHub tool adapter used by OpenSource Mentor."""
 
-    def __init__(self, token: str | None = None):
+    def __init__(self, token: str | None = None, agent_name: str = "opensource_mentor"):
         self.token = (token if token is not None else GITHUB_TOKEN).strip()
+        self.agent_name = agent_name
 
     @staticmethod
     def _cache_key(namespace: str, value: str) -> str:
@@ -122,6 +124,7 @@ class GitHubMCPClient:
         )
 
     def search_repositories(self, query: str, limit: int = 3) -> list[dict]:
+        assert_tool_allowed(self.agent_name, "github.search_repositories")
         search_input = GitHubSearchInput.model_validate({"query": query, "limit": limit})
         params = {"q": search_input.query, "sort": "stars", "per_page": search_input.limit}
         cache_key = self._cache_key("search", f"{self.auth_mode}:{search_input.query}:{search_input.limit}")
@@ -187,6 +190,7 @@ class GitHubMCPClient:
         return []
 
     def read_readme(self, repo: str) -> str:
+        assert_tool_allowed(self.agent_name, "github.read_readme")
         cache_key = self._cache_key("readme", f"{self.auth_mode}:{repo}")
         cached = self._cache_get_json(cache_key)
         if isinstance(cached, str):

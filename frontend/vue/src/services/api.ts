@@ -265,10 +265,10 @@ export function openLearningEvents(sessionId: string, token: string): EventSourc
   return new EventSource(`${API_BASE}/learning-coach/${sessionId}/events?${params.toString()}`);
 }
 
-export async function startLearning(userGoal: string, learnerId: string, token: string): Promise<CoachResponse> {
+export async function startLearning(userGoal: string, token: string): Promise<CoachResponse> {
   return requestJson("/learning-coach/start", token, {
     method: "POST",
-    body: JSON.stringify({ user_goal: userGoal, learner_id: learnerId })
+    body: JSON.stringify({ user_goal: userGoal })
   });
 }
 

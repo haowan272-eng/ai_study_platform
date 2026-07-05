@@ -23,6 +23,7 @@ class LearningRecordStore:
         encoded = json.dumps(state, ensure_ascii=False)
         db = None
         state_user_id = None
+        saved_to_db = False
         try:
             db = SessionLocal()
             try:
@@ -73,6 +74,7 @@ class LearningRecordStore:
                 ))
                 consolidate_learning_memory(db, state)
             db.commit()
+            saved_to_db = True
         except Exception as exc:
             if db is not None:
                 db.rollback()
@@ -90,7 +92,8 @@ class LearningRecordStore:
         finally:
             if db is not None:
                 db.close()
-        self.files.write_json(f"sessions/{session_id}.json", state)
+        if not saved_to_db:
+            self.files.write_json(f"sessions/{session_id}.json", state)
 
     def get(self, session_id: str, user_id: int | None = None) -> dict | None:
         db = None

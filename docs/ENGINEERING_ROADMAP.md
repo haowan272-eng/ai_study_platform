@@ -16,7 +16,7 @@ Status: started
 Status: started
 
 - Use `pyproject.toml` for Python version, test, lint, and formatting configuration.
-- Use `requirements-dev.txt` for local development dependencies.
+- Use `uv.lock` and `pyproject.toml` for reproducible local development dependencies.
 - Use `check.ps1` as the local quality gate.
 - Add CI to run backend tests, ruff, and frontend build on every pull request.
 

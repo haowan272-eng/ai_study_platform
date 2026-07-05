@@ -6,7 +6,6 @@ from app.schemas.contracts import PublicLearningCoachStateModel
 
 class StartLearningRequest(BaseModel):
     user_goal: str = Field(min_length=3, max_length=2000)
-    learner_id: str = Field(default="anonymous", min_length=1, max_length=128)
 
 
 class SubmitQuizRequest(BaseModel):

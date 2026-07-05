@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+﻿import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 
 export default defineConfig({
@@ -6,9 +6,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/auth": "http://localhost:8001",
-      "/learning-coach": "http://localhost:8001",
-      "/health": "http://localhost:8001"
+      "/auth": "http://localhost:8000",
+      "/learning-coach": "http://localhost:8000",
+      "/health": "http://localhost:8000"
     }
   }
 });

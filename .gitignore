@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .venv/
+.venv*/
 .idea/
 .pytest_cache/
 uploads/
@@ -10,3 +11,7 @@ data/
 *.log
 frontend/vue/node_modules/
 frontend/vue/dist/
+.uv-cache/
+.platform-venv/
+.platform-venv1/
+.ruff_cache/
